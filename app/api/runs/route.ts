@@ -20,6 +20,22 @@ export async function GET() {
   return Response.json({ runs, latest });
 }
 
+/**
+ * Strips potentially sensitive substrings from error messages before they
+ * are returned to the browser. AWS SDK errors often embed full ARNs,
+ * bucket names, account IDs and request IDs that can ease reconnaissance
+ * if the demo console is ever exposed beyond the local machine.
+ * (FedRAMP SI-11)
+ */
+function sanitizeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/arn:aws[A-Za-z0-9\-:_/]+/g, "<arn-redacted>")
+    .replace(/\b\d{12}\b/g, "<account-redacted>")
+    .replace(/RequestId:\s*[A-Za-z0-9\-]+/gi, "RequestId: <redacted>")
+    .slice(0, 500);
+}
+
 export async function POST(request: NextRequest) {
   const form = await request.formData();
   const mode = form.get("mode") === "event" ? "event" : "upload";
@@ -52,10 +68,7 @@ export async function POST(request: NextRequest) {
     run = {
       ...run,
       status: "failed",
-      errors: [
-        ...run.errors,
-        error instanceof Error ? error.message : String(error),
-      ],
+      errors: [...run.errors, sanitizeError(error)],
     };
   }
 
