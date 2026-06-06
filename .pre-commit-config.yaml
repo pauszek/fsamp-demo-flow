@@ -1,0 +1,47 @@
+# Pre-commit hooks for fsamp-demo-flow (Next.js demo console).
+# Same secret-scanning baseline as the rest of the FSAMP repositories.
+# .env.local is intentionally gitignored, but a misconfigured `git add -f`
+# would still bypass the ignore rule, so gitleaks acts as a final guard.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+        exclude: ^\.demo-runs/
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: forbid-env-local
+        name: Block staged .env.local
+        entry: bash -c 'if git diff --cached --name-only | grep -E "(^|/)\.env(\..*)?$" | grep -v "\.example$" >/dev/null; then echo "Refusing to commit .env files (use .env.example as template)"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: typescript-check
+        name: TypeScript type check
+        entry: npx --no-install tsc --noEmit
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
+        stages: [pre-push]
+
+ci:
+  autofix_prs: true
+  autoupdate_schedule: weekly
+  skip: [typescript-check]
