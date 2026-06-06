@@ -41,7 +41,7 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
   );
 
   const event = {
-    schemaVersion: "1.1.1",
+    schemaVersion: "1.1.2",
     fileId,
     eventId,
     correlationId,
