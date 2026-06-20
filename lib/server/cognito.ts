@@ -76,9 +76,9 @@ export async function getAccessToken(): Promise<string> {
   );
 
   const authResult = response.AuthenticationResult;
-  const token = authResult?.AccessToken;
-  if (!token) {
-    throw new Error("Cognito authentication did not return an access token");
+  const token = authResult?.IdToken ?? authResult?.AccessToken;
+  if (!authResult || !token) {
+    throw new Error("Cognito authentication did not return a gateway token");
   }
 
   cachedToken = {

@@ -1,6 +1,8 @@
 import { CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-provider";
+import { CloudWatchLogsClient } from "@aws-sdk/client-cloudwatch-logs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { KMSClient } from "@aws-sdk/client-kms";
+import { LambdaClient } from "@aws-sdk/client-lambda";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SNSClient } from "@aws-sdk/client-sns";
 import { SQSClient } from "@aws-sdk/client-sqs";
@@ -26,6 +28,10 @@ export function s3Client() {
   });
 }
 
+export function cloudWatchLogsClient() {
+  return new CloudWatchLogsClient(baseClientConfig());
+}
+
 export function dynamoClient() {
   return new DynamoDBClient(baseClientConfig());
 }
@@ -40,6 +46,10 @@ export function snsClient() {
 
 export function kmsClient() {
   return new KMSClient(baseClientConfig());
+}
+
+export function lambdaClient() {
+  return new LambdaClient(baseClientConfig());
 }
 
 export function cognitoClient() {
