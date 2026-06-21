@@ -1,7 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { FilterLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
+
 import type { DemoLogBundle, FlowRun } from "@/lib/flow/types";
+import { cloudWatchLogsClient } from "@/lib/server/aws";
 import { getConfig } from "@/lib/server/config";
 
 const execFileAsync = promisify(execFile);
@@ -29,19 +32,84 @@ function withUuidDashes(value?: string) {
   ];
 }
 
+function parityLogGroups() {
+  const config = getConfig();
+  return [
+    `/aws/lambda/${config.outboxPublisherLambdaName}`,
+    `/aws/lambda/${config.processorLambdaName}`,
+    "/ecs/fsamp-local",
+  ];
+}
+
+async function collectCloudWatchLogs(runId: string, filters: string[]): Promise<DemoLogBundle> {
+  const client = cloudWatchLogsClient();
+  const groups = await Promise.all(
+    parityLogGroups().map(async (name) => {
+      try {
+        const response = await client.send(
+          new FilterLogEventsCommand({
+            logGroupName: name,
+            limit: 240,
+          }),
+        );
+        const lines = (response.events ?? [])
+          .map((event) => {
+            const timestamp = event.timestamp
+              ? new Date(event.timestamp).toISOString()
+              : "no-timestamp";
+            return `[${timestamp}] ${event.logStreamName ?? "stream"} ${event.message ?? ""}`;
+          })
+          .filter(Boolean);
+        const matchedLines = filters.length
+          ? lines.filter((line) => filters.some((filter) => line.includes(filter)))
+          : [];
+
+        return {
+          name,
+          available: true,
+          matchedLines: matchedLines.slice(-120),
+          tail: lines.slice(-90),
+        };
+      } catch (error) {
+        return {
+          name,
+          available: false,
+          matchedLines: [],
+          tail: [],
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+  );
+
+  return {
+    runId,
+    filters,
+    containers: groups,
+  };
+}
+
 export async function collectLogs(run: FlowRun): Promise<DemoLogBundle> {
+  const config = getConfig();
   const filters = [
     run.fileId,
     run.correlationId,
     ...withUuidDashes(run.correlationId),
+    run.requestId,
+    run.idempotencyKey,
     run.directEvent?.eventId,
+    run.directEvent?.messageId,
     run.uploadResponse?.filename,
     run.input.filename,
     run.objectKey,
     run.id,
   ].filter((value): value is string => Boolean(value));
 
-  if (!getConfig().dockerLogsEnabled) {
+  if (config.runtimeMode === "terraform-local") {
+    return collectCloudWatchLogs(run.id, filters);
+  }
+
+  if (!config.dockerLogsEnabled) {
     return {
       runId: run.id,
       filters,

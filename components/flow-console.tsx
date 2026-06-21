@@ -44,20 +44,25 @@ const positions: Record<StepId, { x: number; y: number }> = {
   localstack: { x: 0, y: 0 },
   cognito: { x: 300, y: 0 },
   "gateway-upload": { x: 600, y: 0 },
-  "gateway-validation": { x: 900, y: 0 },
-  "s3-store": { x: 900, y: 190 },
-  "gateway-outbox": { x: 600, y: 190 },
+  idempotency: { x: 900, y: 0 },
+  "gateway-validation": { x: 1200, y: 0 },
+  "s3-store": { x: 1200, y: 190 },
+  "gateway-outbox": { x: 900, y: 190 },
+  "outbox-publish": { x: 600, y: 190 },
   "sns-sqs": { x: 300, y: 190 },
-  "processor-consume": { x: 0, y: 190 },
-  "s3-read": { x: 0, y: 380 },
-  "processor-analysis": { x: 300, y: 380 },
-  "dynamodb-metadata": { x: 600, y: 380 },
-  "result-outbox": { x: 900, y: 380 },
+  "dlq-observability": { x: 0, y: 190 },
+  "processor-consume": { x: 0, y: 380 },
+  "s3-read": { x: 300, y: 380 },
+  "processor-analysis": { x: 600, y: 380 },
+  "dynamodb-metadata": { x: 900, y: 380 },
+  "result-outbox": { x: 1200, y: 380 },
 };
 
 const evidenceKeys = [
   "fileId",
   "correlationId",
+  "requestId",
+  "idempotencyKey",
   "responseStatus",
   "bucketName",
   "objectKey",
@@ -65,17 +70,32 @@ const evidenceKeys = [
   "sseKmsKeyId",
   "kmsKeyArn",
   "recordStatus",
+  "outboxStatus",
+  "publishPath",
+  "runtimeMode",
+  "localParityMode",
+  "directPublishAfterOutbox",
+  "fileEventsTopicArn",
+  "processingEventsTopicArn",
+  "outboxPublisherLambdaName",
+  "processorLambdaName",
   "eventType",
   "fileHash",
   "isSafe",
   "messagesAvailable",
   "messagesInFlight",
+  "dlqMessages",
+  "cloudwatchService",
+  "cloudwatchLogsService",
 ];
 
 const logLabels: Record<string, string> = {
   "fsamp-e2e-gateway": "Gateway",
   "fsamp-e2e-processor": "Processor",
   "fsamp-e2e-localstack": "LocalStack",
+  "/aws/lambda/fsamp-local-outbox-publisher": "Outbox Lambda",
+  "/aws/lambda/fsamp-local-processor": "Processor Lambda",
+  "/ecs/fsamp-local": "ECS Gateway",
 };
 
 function formatTime(value?: string) {
@@ -95,9 +115,9 @@ function getSelectedStep(steps: FlowStep[], selectedStepId: StepId | undefined) 
   return steps.find((step) => step.id === selectedStepId) ?? steps[0];
 }
 
-function edgeStatus(run: FlowRun | undefined, source: StepId, target: StepId) {
-  const sourceStep = run?.steps.find((step) => step.id === source);
-  const targetStep = run?.steps.find((step) => step.id === target);
+function edgeStatus(steps: FlowStep[], source: StepId, target: StepId) {
+  const sourceStep = steps.find((step) => step.id === source);
+  const targetStep = steps.find((step) => step.id === target);
   if (sourceStep?.status === "failed" || targetStep?.status === "failed") return "failed";
   if (sourceStep?.status === "success" && targetStep?.status === "success") return "success";
   if (sourceStep?.status === "success" || targetStep?.status === "running") return "running";
@@ -149,6 +169,23 @@ function healthClass(ok?: boolean) {
   return ok ? "bg-emerald-400" : "bg-red-400";
 }
 
+function normalizeSteps(steps: FlowStep[]) {
+  const storedSteps = new Map(steps.map((step) => [step.id, step]));
+  return initialSteps.map((definition) => {
+    const stored = storedSteps.get(definition.id);
+    if (!stored) return definition;
+
+    return {
+      ...definition,
+      status: stored.status,
+      startedAt: stored.startedAt,
+      completedAt: stored.completedAt,
+      evidence: stored.evidence,
+      error: stored.error,
+    };
+  });
+}
+
 export function FlowConsole() {
   const [run, setRun] = useState<FlowRun>();
   const [runs, setRuns] = useState<RunListItem[]>([]);
@@ -161,11 +198,10 @@ export function FlowConsole() {
   const [notice, setNotice] = useState<string>();
   const [replayActive, setReplayActive] = useState(false);
   const [visibleStepCount, setVisibleStepCount] = useState<number | undefined>();
+  const [flowMounted, setFlowMounted] = useState(false);
   const pollRef = useRef<number | undefined>(undefined);
 
-  const baseSteps = run?.steps ?? initialSteps;
-  const selectedStep = getSelectedStep(baseSteps, selectedStepId);
-  const highlights = evidenceHighlights(selectedStep);
+  const normalizedSteps = useMemo(() => (run ? normalizeSteps(run.steps) : initialSteps), [run]);
 
   const loadRuns = useCallback(async () => {
     const response = await fetch("/api/runs", { cache: "no-store" });
@@ -185,7 +221,13 @@ export function FlowConsole() {
   const loadLogs = useCallback(async (runId: string) => {
     const response = await fetch(`/api/runs/${runId}/logs`, { cache: "no-store" });
     if (response.ok) {
-      setLogs((await response.json()) as DemoLogBundle);
+      const payload = (await response.json()) as DemoLogBundle;
+      setLogs(payload);
+      setSelectedLogName((current) =>
+        payload.containers.some((container) => container.name === current)
+          ? current
+          : (payload.containers[0]?.name ?? current),
+      );
     }
   }, []);
 
@@ -225,6 +267,11 @@ export function FlowConsole() {
 
     return () => window.clearTimeout(timer);
   }, [loadEnvironment, loadRuns]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setFlowMounted(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!run?.id || replayActive) return;
@@ -276,20 +323,23 @@ export function FlowConsole() {
 
   const displayedSteps = useMemo(() => {
     if (!run) return initialSteps;
-    if (!replayActive || visibleStepCount === undefined) return run.steps;
-    return run.steps.map((step, index) =>
+    if (!replayActive || visibleStepCount === undefined) return normalizedSteps;
+    return normalizedSteps.map((step, index) =>
       index < visibleStepCount
         ? step
         : { ...step, status: "pending" as const, evidence: undefined },
     );
-  }, [replayActive, run, visibleStepCount]);
+  }, [normalizedSteps, replayActive, run, visibleStepCount]);
+
+  const selectedStep = getSelectedStep(displayedSteps, selectedStepId);
+  const highlights = evidenceHighlights(selectedStep);
 
   const nodes: Node[] = useMemo(
     () =>
       displayedSteps.map((step, index) => ({
         id: step.id,
         type: "flowNode",
-        position: positions[step.id],
+        position: positions[step.id] ?? { x: (index % 5) * 300, y: Math.floor(index / 5) * 190 },
         data: {
           step,
           selected: selectedStepId === step.id,
@@ -300,9 +350,13 @@ export function FlowConsole() {
   );
 
   const edges: Edge[] = useMemo(
-    () =>
-      STEP_EDGES.map(([source, target]) => {
-        const status = edgeStatus(run, source, target);
+    () => {
+      const nodeIds = new Set(displayedSteps.map((step) => step.id));
+
+      return STEP_EDGES.filter(
+        ([source, target]) => nodeIds.has(source) && nodeIds.has(target),
+      ).map(([source, target]) => {
+        const status = edgeStatus(displayedSteps, source, target);
         return {
           id: `${source}-${target}`,
           source,
@@ -317,8 +371,9 @@ export function FlowConsole() {
             strokeWidth: status === "success" ? 3 : 2,
           },
         };
-      }),
-    [run],
+      });
+    },
+    [displayedSteps],
   );
 
   const selectedLogContainer =
@@ -380,11 +435,10 @@ export function FlowConsole() {
     setReplayActive(true);
   }
 
-  const successRate = run
-    ? Math.round((run.summary.completedSteps / Math.max(run.summary.totalSteps, 1)) * 100)
-    : 0;
   const skippedSteps = displayedSteps.filter((step) => step.status === "skipped").length;
   const activeSteps = displayedSteps.length - skippedSteps;
+  const completedSteps = displayedSteps.filter((step) => step.status === "success").length;
+  const successRate = Math.round((completedSteps / Math.max(activeSteps, 1)) * 100);
 
   return (
     <main className="min-h-screen bg-[#0b0d10] text-zinc-100">
@@ -403,7 +457,7 @@ export function FlowConsole() {
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={run?.status ?? "idle"} />
             <span className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300">
-              {run ? `${run.summary.completedSteps}/${run.summary.totalSteps} steps` : "no run"}
+              {run ? `${completedSteps}/${activeSteps} steps` : "no run"}
             </span>
             <span className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300">
               {run ? run.mode : "mode"}
@@ -609,20 +663,26 @@ export function FlowConsole() {
             </div>
 
             <div className="h-[610px] bg-[#0d1014]">
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                fitView
-                fitViewOptions={{ padding: 0.18 }}
-                minZoom={0.45}
-                maxZoom={1.4}
-                onNodeClick={(_, node) => setSelectedStepId(node.id as StepId)}
-                proOptions={{ hideAttribution: true }}
-              >
-                <Background color="#27272a" gap={22} />
-                <Controls className="!border-zinc-700 !bg-zinc-950 !text-zinc-100" />
-              </ReactFlow>
+              {flowMounted ? (
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  nodeTypes={nodeTypes}
+                  fitView
+                  fitViewOptions={{ padding: 0.18 }}
+                  minZoom={0.45}
+                  maxZoom={1.4}
+                  onNodeClick={(_, node) => setSelectedStepId(node.id as StepId)}
+                  proOptions={{ hideAttribution: true }}
+                >
+                  <Background color="#27272a" gap={22} />
+                  <Controls className="!border-zinc-700 !bg-zinc-950 !text-zinc-100" />
+                </ReactFlow>
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+                  Loading flow map
+                </div>
+              )}
             </div>
           </section>
 
@@ -679,7 +739,7 @@ export function FlowConsole() {
             <section className="rounded-md border border-zinc-800 bg-[#111418]">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-zinc-100">Container Logs</h2>
+                  <h2 className="text-sm font-semibold text-zinc-100">Runtime Logs</h2>
                   <div className="mt-1 text-xs text-zinc-500">
                     {logs ? `${logs.filters.length} filters · ${selectedLogMode}` : "not loaded"}
                   </div>
@@ -722,7 +782,7 @@ export function FlowConsole() {
                     </button>
                   )) ?? (
                     <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-sm text-zinc-500">
-                      No containers
+                      No log sources
                     </div>
                   )}
                 </div>

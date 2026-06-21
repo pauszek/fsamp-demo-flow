@@ -1,5 +1,6 @@
 SHELL := /bin/bash
 
+INFRA_DIR ?= ../fsamp-infra
 E2E_DIR ?= ../fsamp-infra/e2e
 GATEWAY_DIR ?= ../fsamp-gateway
 PROCESSOR_DIR ?= ../fsamp-processor
@@ -8,13 +9,14 @@ APP_URL ?= http://localhost:3000
 LOCALSTACK_URL ?= http://localhost:4566
 GATEWAY_HEALTH_URL ?= http://localhost:8080/actuator/health
 
-.PHONY: help env setup check-docker check-token images localstack services stack wait health app demo open logs e2e stop reset clean-runs
+.PHONY: help env setup check-docker check-token images localstack-fast services-fast stack-fast stack wait-fast wait health app parity demo demo-fast open logs logs-fast e2e stop stop-fast reset clean-runs
 
 help:
 	@echo "FSAMP demo targets"
 	@echo ""
-	@echo "  make demo        Start LocalStack stack and run the Next.js console"
-	@echo "  make stack       Build local images and start LocalStack/gateway/processor"
+	@echo "  make demo        Provision Terraform-managed LocalStack Pro parity and run the console"
+	@echo "  make demo-fast   Start the fast compose fallback and run the console"
+	@echo "  make stack-fast  Build local images and start LocalStack/gateway/processor compose"
 	@echo "  make images      Build gateway and processor images from local repos"
 	@echo "  make app         Run only the Next.js console"
 	@echo "  make e2e         Run the existing FSAMP e2e test container"
@@ -50,17 +52,19 @@ images: check-docker env
 	echo "Building processor image: $${PROCESSOR_IMAGE:-fsamp-processor:local}"; \
 	docker build --target "$(PROCESSOR_DOCKER_TARGET)" --build-arg REQUIRE_FIPS_PROVIDER=false -t "$${PROCESSOR_IMAGE:-fsamp-processor:local}" "$(PROCESSOR_DIR)"
 
-localstack: check-docker check-token
+localstack-fast: check-docker check-token
 	@set -a; source .env.local; set +a; \
 	cd "$(E2E_DIR)" && docker compose up -d localstack
 
-services: check-docker check-token
+services-fast: check-docker check-token
 	@set -a; source .env.local; set +a; \
 	cd "$(E2E_DIR)" && docker compose up -d gateway processor
 
-stack: images localstack services wait
+stack-fast: images localstack-fast services-fast wait-fast
 
-wait:
+stack: stack-fast
+
+wait-fast:
 	@set -euo pipefail; \
 	echo "Waiting for LocalStack..."; \
 	for i in {1..90}; do \
@@ -83,28 +87,57 @@ wait:
 	echo "FSAMP e2e stack is ready"
 
 health:
-	@curl -fsS "$(LOCALSTACK_URL)/_localstack/health" >/dev/null && echo "LocalStack OK"
-	@curl -fsS "$(GATEWAY_HEALTH_URL)" >/dev/null && echo "Gateway OK"
-	@docker ps --filter name=fsamp-e2e-processor --filter health=healthy --format '{{.Names}}' | grep -q fsamp-e2e-processor && echo "Processor OK"
+	@set -a; [ -f .env.local ] && source .env.local; set +a; \
+	curl -fsS "$${AWS_ENDPOINT_URL:-$(LOCALSTACK_URL)}/_localstack/health" >/dev/null && echo "LocalStack OK"; \
+	if [ "$${FSAMP_DEMO_RUNTIME:-terraform-local}" = "terraform-local" ]; then \
+		base="$${GATEWAY_URL:?GATEWAY_URL missing; run make demo or cd $(INFRA_DIR) && make local-parity}"; \
+		path="$${GATEWAY_HEALTH_PATH:-/health}"; \
+		curl -fsS "$${base%/}/$${path#/}" >/dev/null && echo "API Gateway OK"; \
+		aws --endpoint-url "$${AWS_ENDPOINT_URL:-$(LOCALSTACK_URL)}" --region "$${AWS_REGION:-us-west-2}" lambda list-event-source-mappings >/dev/null && echo "Lambda mappings OK"; \
+	else \
+		curl -fsS "$(GATEWAY_HEALTH_URL)" >/dev/null && echo "Gateway OK"; \
+		docker ps --filter name=fsamp-e2e-processor --filter health=healthy --format '{{.Names}}' | grep -q fsamp-e2e-processor && echo "Processor OK"; \
+	fi
 
 app: setup
 	@npm run dev
 
-demo: setup stack
+parity: check-docker check-token
+	@set -a; source .env.local; set +a; \
+	cd "$(INFRA_DIR)" && LOCALSTACK_AUTH_TOKEN="$${LOCALSTACK_AUTH_TOKEN}" \
+		GATEWAY_DIR="$(CURDIR)/$(GATEWAY_DIR)" \
+		PROCESSOR_DIR="$(CURDIR)/$(PROCESSOR_DIR)" \
+		DEMO_ENV_PATH="$(CURDIR)/.env.local" \
+		make local-parity
+
+demo: setup parity
+	@npm run dev
+
+demo-fast: setup stack-fast
 	@npm run dev
 
 open:
 	@open "$(APP_URL)"
 
 logs: check-docker
+	@set -a; [ -f .env.local ] && source .env.local; set +a; \
+	if [ "$${FSAMP_DEMO_RUNTIME:-terraform-local}" = "terraform-local" ]; then \
+		aws --endpoint-url "$${AWS_ENDPOINT_URL:-$(LOCALSTACK_URL)}" --region "$${AWS_REGION:-us-west-2}" logs tail "/aws/lambda/$${OUTBOX_PUBLISHER_LAMBDA_NAME:-fsamp-local-outbox-publisher}" --follow; \
+	else \
+		$(MAKE) logs-fast; \
+	fi
+
+logs-fast: check-docker
 	@cd "$(E2E_DIR)" && docker compose logs -f localstack gateway processor
 
-e2e: stack
+e2e: stack-fast
 	@set -a; source .env.local; set +a; \
 	cd "$(E2E_DIR)" && docker compose --profile test up --build --abort-on-container-exit --exit-code-from e2e-tests e2e-tests
 
-stop: check-docker
+stop-fast: check-docker
 	@cd "$(E2E_DIR)" && docker compose down
+
+stop: stop-fast
 
 reset: check-docker
 	@cd "$(E2E_DIR)" && docker compose down -v

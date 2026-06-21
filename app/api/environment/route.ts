@@ -33,7 +33,11 @@ export async function GET() {
       error: error instanceof Error ? error.name : "FetchError",
     }));
 
-  const gateway = await fetch(`${config.gatewayUrl}/actuator/health`, {
+  const gatewayHealthUrl = new URL(
+    config.gatewayHealthPath.replace(/^\/+/, ""),
+    config.gatewayUrl.endsWith("/") ? config.gatewayUrl : `${config.gatewayUrl}/`,
+  ).toString();
+  const gateway = await fetch(gatewayHealthUrl, {
     cache: "no-store",
   })
     .then((response) => ({ ok: response.ok, status: response.status }))
@@ -48,13 +52,23 @@ export async function GET() {
     localstack,
     config: {
       gatewayUrl: config.gatewayUrl,
+      gatewayUploadPath: config.gatewayUploadPath,
+      gatewayHealthPath: config.gatewayHealthPath,
       awsEndpointUrl: config.awsEndpointUrl,
       awsRegion: config.awsRegion,
       s3BucketName: config.s3BucketName,
       metadataTableName: config.metadataTableName,
       outboxTableName: config.outboxTableName,
+      idempotencyTableName: config.idempotencyTableName,
+      directPublishAfterOutbox: config.directPublishAfterOutbox,
+      runtimeMode: config.runtimeMode,
       sqsQueueUrl: config.sqsQueueUrl,
+      processingDlqQueueUrl: config.processingDlqQueueUrl,
       snsTopicArn: config.snsTopicArn,
+      fileEventsTopicArn: config.fileEventsTopicArn,
+      processingEventsTopicArn: config.processingEventsTopicArn,
+      processorLambdaName: config.processorLambdaName,
+      outboxPublisherLambdaName: config.outboxPublisherLambdaName,
       kmsKeyId: config.kmsKeyId,
       dockerLogsEnabled: config.dockerLogsEnabled,
     },

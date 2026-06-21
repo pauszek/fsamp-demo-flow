@@ -68,7 +68,7 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
 
   const response = await snsClient().send(
     new PublishCommand({
-      TopicArn: config.snsTopicArn,
+      TopicArn: config.fileEventsTopicArn,
       Message: JSON.stringify(event),
       MessageAttributes: {
         eventType: {
@@ -89,7 +89,7 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
     correlationId,
     objectKey,
     bucketName: config.s3BucketName,
-    topicArn: config.snsTopicArn,
+    topicArn: config.fileEventsTopicArn,
     checksumSha256,
     messageId: response.MessageId,
   };

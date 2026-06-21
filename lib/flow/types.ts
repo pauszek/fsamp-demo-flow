@@ -8,10 +8,13 @@ export type StepId =
   | "localstack"
   | "cognito"
   | "gateway-upload"
+  | "idempotency"
   | "gateway-validation"
   | "s3-store"
   | "gateway-outbox"
+  | "outbox-publish"
   | "sns-sqs"
+  | "dlq-observability"
   | "processor-consume"
   | "s3-read"
   | "processor-analysis"
@@ -84,6 +87,8 @@ export type FlowRun = {
   input: FlowRunInput;
   fileId?: string;
   correlationId?: string;
+  requestId?: string;
+  idempotencyKey?: string;
   objectKey?: string;
   bucketName?: string;
   uploadResponse?: UploadResponse;

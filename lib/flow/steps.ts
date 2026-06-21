@@ -7,7 +7,7 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
     shortLabel: "LocalStack",
     lane: "security",
     component: "AWS local control plane",
-    description: "S3, KMS, SNS, SQS, DynamoDB and Cognito are reachable.",
+    description: "S3, KMS, SNS, SQS, DynamoDB, Cognito, CloudWatch Logs and optional audit services are reachable.",
     controls: [
       { control: "CM-2", label: "Baseline config" },
       { control: "SA-11", label: "Local validation" },
@@ -35,6 +35,18 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
     controls: [
       { control: "AC-4", label: "Information flow" },
       { control: "AU-12", label: "Audit event" },
+    ],
+  },
+  {
+    id: "idempotency",
+    label: "Idempotency guard",
+    shortLabel: "Idempotency",
+    lane: "persistence",
+    component: "DynamoDB idempotency table",
+    description: "Gateway records the X-Idempotency-Key so retries cannot duplicate the upload transaction.",
+    controls: [
+      { control: "SC-5", label: "DoS resilience" },
+      { control: "CP-10", label: "Recovery support" },
     ],
   },
   {
@@ -74,6 +86,18 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
     ],
   },
   {
+    id: "outbox-publish",
+    label: "Outbox publish bridge",
+    shortLabel: "Publish bridge",
+    lane: "eventing",
+    component: "DynamoDB Streams + Lambda",
+    description: "LocalStack Pro parity uses DynamoDB Streams and the outbox-publisher Lambda before SNS.",
+    controls: [
+      { control: "AU-12", label: "Audit event" },
+      { control: "SI-4", label: "Monitoring" },
+    ],
+  },
+  {
     id: "sns-sqs",
     label: "SNS to SQS delivery",
     shortLabel: "SNS/SQS",
@@ -86,12 +110,24 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
     ],
   },
   {
+    id: "dlq-observability",
+    label: "DLQ and log guardrails",
+    shortLabel: "DLQ + Logs",
+    lane: "security",
+    component: "SQS DLQ + CloudWatch Logs",
+    description: "Queue redrive policy, DLQ depth, LocalStack service health and runtime log sources are collected as operational evidence.",
+    controls: [
+      { control: "AU-6", label: "Audit review" },
+      { control: "SI-4", label: "System monitoring" },
+    ],
+  },
+  {
     id: "processor-consume",
     label: "Processor consumes event",
     shortLabel: "Consume",
     lane: "processing",
-    component: "fsamp-processor",
-    description: "Processor receives the FILE_UPLOADED event from SQS.",
+    component: "processor Lambda",
+    description: "Processor Lambda receives the FILE_UPLOADED event from SQS.",
     controls: [
       { control: "SI-4", label: "Monitoring" },
       { control: "AU-12", label: "Audit event" },
@@ -139,7 +175,7 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
     shortLabel: "Result",
     lane: "eventing",
     component: "DynamoDB outbox",
-    description: "Processor writes the terminal FILE_PROCESSED or failure event.",
+    description: "Processor writes the terminal ANALYSIS_COMPLETED or PROCESSING_FAILED event.",
     controls: [
       { control: "AU-12", label: "Audit event" },
       { control: "CP-2", label: "Continuity evidence" },
@@ -150,11 +186,14 @@ export const FLOW_STEPS: FlowStepDefinition[] = [
 export const STEP_EDGES: Array<[StepId, StepId]> = [
   ["localstack", "cognito"],
   ["cognito", "gateway-upload"],
-  ["gateway-upload", "gateway-validation"],
+  ["gateway-upload", "idempotency"],
+  ["idempotency", "gateway-validation"],
   ["gateway-validation", "s3-store"],
   ["s3-store", "gateway-outbox"],
-  ["gateway-outbox", "sns-sqs"],
-  ["sns-sqs", "processor-consume"],
+  ["gateway-outbox", "outbox-publish"],
+  ["outbox-publish", "sns-sqs"],
+  ["sns-sqs", "dlq-observability"],
+  ["dlq-observability", "processor-consume"],
   ["processor-consume", "s3-read"],
   ["s3-read", "processor-analysis"],
   ["processor-analysis", "dynamodb-metadata"],
@@ -170,7 +209,14 @@ export function createInitialSteps(): FlowStep[] {
 
 export function terminalStepIdsForMode(mode: "upload" | "event"): StepId[] {
   if (mode === "event") {
-    return ["cognito", "gateway-upload", "gateway-validation", "gateway-outbox"];
+    return [
+      "cognito",
+      "gateway-upload",
+      "idempotency",
+      "gateway-validation",
+      "gateway-outbox",
+      "outbox-publish",
+    ];
   }
   return [];
 }
