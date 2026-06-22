@@ -131,4 +131,4 @@ The log panel reads CloudWatch Logs in `terraform-local` mode and falls back to
 Docker logs only in `compose` mode. It filters by `fileId`, `correlationId`,
 `requestId`, `idempotencyKey`, object key and event/message IDs.
 
-LocalStack demonstrates the API-level behavior. It does not constitute formal FIPS validation. Production AWS evidence should come from real AWS configuration, CloudTrail, AWS Config, KMS, CloudWatch and service control outputs.
+LocalStack Pro demonstrates the API-level behavior and is the primary repeatable evidence source for the thesis demo. It does not constitute formal FIPS validation or FedRAMP authorization. A short-lived real AWS run can supplement the evidence with CloudTrail, AWS Config, KMS, CloudWatch and managed-service control outputs, but it is not required for the LocalStack parity proof.
