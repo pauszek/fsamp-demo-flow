@@ -658,10 +658,10 @@ export async function collectEvidence(run: FlowRun): Promise<FlowRun> {
     () => observeUpload(nextRun),
     () => observeIdempotency(nextRun),
     () => observeS3(nextRun),
-    () => observeOutbox(nextRun),
     () => observeMessaging(nextRun),
     () => observeDlqAndLogs(nextRun),
     () => observeProcessor(nextRun),
+    () => observeOutbox(nextRun),
   ];
 
   for (const observer of observers) {
