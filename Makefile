@@ -6,10 +6,11 @@ GATEWAY_DIR ?= ../fsamp-gateway
 PROCESSOR_DIR ?= ../fsamp-processor
 PROCESSOR_DOCKER_TARGET ?= production
 APP_URL ?= http://localhost:3000
+APP_PORT ?= 3000
 LOCALSTACK_URL ?= http://localhost:4566
 GATEWAY_HEALTH_URL ?= http://localhost:8080/actuator/health
 
-.PHONY: help env setup check-docker check-token images localstack-fast services-fast stack-fast stack wait-fast wait health app parity demo demo-fast open logs logs-fast e2e stop stop-fast reset clean-runs
+.PHONY: help env setup check-docker check-token images localstack-fast services-fast stack-fast stack wait-fast wait health app parity demo demo-fast open logs logs-fast e2e stop-app stop-parity stop stop-fast reset clean-runs
 
 help:
 	@echo "FSAMP demo targets"
@@ -22,8 +23,8 @@ help:
 	@echo "  make e2e         Run the existing FSAMP e2e test container"
 	@echo "  make health      Check LocalStack and gateway health"
 	@echo "  make logs        Tail LocalStack, gateway and processor logs"
-	@echo "  make stop        Stop the Docker e2e stack"
-	@echo "  make reset       Stop stack, remove volumes and clear captured demo runs"
+	@echo "  make stop        Stop the console, parity stack and fast e2e stack"
+	@echo "  make reset       Stop stack, remove volumes, free the Docker network and clear captured demo runs"
 	@echo ""
 	@echo "Set LOCALSTACK_AUTH_TOKEN in .env.local before starting the stack."
 
@@ -100,7 +101,7 @@ health:
 	fi
 
 app: setup
-	@npm run dev
+	@APP_PORT="$(APP_PORT)" ./scripts/run-next-dev.sh
 
 parity: check-docker check-token
 	@set -a; source .env.local; set +a; \
@@ -110,11 +111,16 @@ parity: check-docker check-token
 		DEMO_ENV_PATH="$(CURDIR)/.env.local" \
 		make local-parity
 
-demo: setup parity
-	@npm run dev
+demo: setup
+	@if $(MAKE) --no-print-directory health >/dev/null 2>&1; then \
+		echo "Existing LocalStack parity stack is healthy; skipping Terraform apply."; \
+	else \
+		$(MAKE) --no-print-directory parity; \
+	fi
+	@APP_PORT="$(APP_PORT)" ./scripts/run-next-dev.sh
 
 demo-fast: setup stack-fast
-	@npm run dev
+	@APP_PORT="$(APP_PORT)" ./scripts/run-next-dev.sh
 
 open:
 	@open "$(APP_URL)"
@@ -135,12 +141,29 @@ e2e: stack-fast
 	cd "$(E2E_DIR)" && docker compose --profile test up --build --abort-on-container-exit --exit-code-from e2e-tests e2e-tests
 
 stop-fast: check-docker
-	@cd "$(E2E_DIR)" && docker compose down
+	@cd "$(E2E_DIR)" && docker compose down --remove-orphans
 
-stop: stop-fast
+stop-app:
+	@screen -S fsamp-demo-flow -X quit >/dev/null 2>&1 || true
+	@pids="$$(lsof -tiTCP:$(APP_PORT) -sTCP:LISTEN 2>/dev/null || true)"; \
+	if [ -n "$$pids" ]; then \
+		echo "Stopping process listening on port $(APP_PORT): $$pids"; \
+		kill $$pids 2>/dev/null || true; \
+		sleep 1; \
+		pids="$$(lsof -tiTCP:$(APP_PORT) -sTCP:LISTEN 2>/dev/null || true)"; \
+		[ -z "$$pids" ] || kill -9 $$pids 2>/dev/null || true; \
+	else \
+		echo "Port $(APP_PORT) is free"; \
+	fi
 
-reset: check-docker
-	@cd "$(E2E_DIR)" && docker compose down -v
+stop-parity: check-docker
+	@cd "$(INFRA_DIR)" && $(MAKE) local-parity-down
+
+stop: stop-app stop-parity stop-fast
+
+reset: check-docker stop-app
+	@cd "$(INFRA_DIR)" && $(MAKE) local-parity-reset
+	@cd "$(E2E_DIR)" && docker compose down -v --remove-orphans
 	@rm -rf .demo-runs
 
 clean-runs:

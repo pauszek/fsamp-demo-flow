@@ -407,7 +407,9 @@ export function FlowConsole() {
       setSelectedStepId(payload.steps[0]?.id ?? "localstack");
       setReplayActive(false);
       await loadRuns();
-      if (payload.id) await loadLogs(payload.id);
+      if (payload.id) {
+        loadLogs(payload.id).catch(() => undefined);
+      }
 
       if (!response.ok) {
         setNotice(payload.errors[0] ?? "Run failed before full evidence collection.");
