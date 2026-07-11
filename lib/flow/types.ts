@@ -117,7 +117,6 @@ export type DemoLogBundle = {
     name: string;
     available: boolean;
     matchedLines: string[];
-    tail: string[];
     error?: string;
   }>;
 };

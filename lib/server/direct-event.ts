@@ -24,7 +24,7 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
   );
   const kmsKeyId = key.KeyMetadata?.Arn ?? config.kmsKeyId;
 
-  await s3Client().send(
+  const stored = await s3Client().send(
     new PutObjectCommand({
       Bucket: config.s3BucketName,
       Key: objectKey,
@@ -39,9 +39,12 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
       },
     }),
   );
+  if (stored.ServerSideEncryption !== "aws:kms") {
+    throw new Error("S3 did not confirm SSE-KMS encryption");
+  }
 
   const event = {
-    schemaVersion: "1.1.2",
+    schemaVersion: "1.2.0",
     fileId,
     eventId,
     correlationId,
@@ -82,6 +85,9 @@ export async function publishDirectFileEvent(file: File): Promise<DirectEvent> {
       },
     }),
   );
+  if (!response.MessageId) {
+    throw new Error("SNS did not confirm event publication");
+  }
 
   return {
     eventId,

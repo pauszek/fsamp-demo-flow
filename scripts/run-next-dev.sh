@@ -4,6 +4,12 @@ set -euo pipefail
 app_port="${APP_PORT:-3000}"
 dev_pid=""
 
+export FSAMP_DEMO_USERNAME="${FSAMP_DEMO_USERNAME:-fsamp}"
+if [[ -z "${FSAMP_DEMO_PASSWORD:-}" ]]; then
+    export FSAMP_DEMO_PASSWORD
+    FSAMP_DEMO_PASSWORD="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(18).toString("base64url"))')"
+fi
+
 kill_tree() {
     local pid="$1"
     local child
@@ -32,6 +38,9 @@ fi
 
 trap cleanup INT TERM EXIT
 
-npm run dev &
+echo "Demo URL: http://127.0.0.1:${app_port}"
+echo "Demo login: ${FSAMP_DEMO_USERNAME} / ${FSAMP_DEMO_PASSWORD}"
+
+npm run dev -- --port "$app_port" &
 dev_pid="$!"
 wait "$dev_pid"
