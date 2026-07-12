@@ -1,28 +1,17 @@
 import { getConfig } from "@/lib/server/config";
+import { authorizeDemoRequest } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// FedRAMP AC-3: this endpoint exposes infrastructure identifiers (KMS,
-// S3, DynamoDB ARNs) that should never reach the public network. The
-// console is local-only by design; in any non-local NODE_ENV the route
-// short-circuits to 404 so that an accidental deployment behind a
-// public domain cannot leak environment metadata.
-function isLocalOnlyEnvironment(): boolean {
-  if (process.env.NODE_ENV !== "production") {
-    return true;
-  }
-  return process.env.FSAMP_DEMO_ALLOW_PRODUCTION === "true";
-}
-
-export async function GET() {
-  if (!isLocalOnlyEnvironment()) {
-    return new Response("Not Found", { status: 404 });
-  }
+export async function GET(request: Request) {
+  const denied = authorizeDemoRequest(request);
+  if (denied) return denied;
 
   const config = getConfig();
   const localstack = await fetch(`${config.awsEndpointUrl}/_localstack/health`, {
     cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
   })
     .then((response) => ({ ok: response.ok, status: response.status }))
     .catch((error: unknown) => ({
@@ -39,6 +28,7 @@ export async function GET() {
   ).toString();
   const gateway = await fetch(gatewayHealthUrl, {
     cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
   })
     .then((response) => ({ ok: response.ok, status: response.status }))
     .catch((error: unknown) => ({

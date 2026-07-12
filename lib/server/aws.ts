@@ -6,8 +6,14 @@ import { LambdaClient } from "@aws-sdk/client-lambda";
 import { S3Client } from "@aws-sdk/client-s3";
 import { SNSClient } from "@aws-sdk/client-sns";
 import { SQSClient } from "@aws-sdk/client-sqs";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 import { getConfig } from "@/lib/server/config";
+
+const requestHandler = new NodeHttpHandler({
+  connectionTimeout: 2_000,
+  requestTimeout: 8_000,
+});
 
 function baseClientConfig() {
   const config = getConfig();
@@ -18,6 +24,8 @@ function baseClientConfig() {
       accessKeyId: config.awsAccessKeyId,
       secretAccessKey: config.awsSecretAccessKey,
     },
+    maxAttempts: 2,
+    requestHandler,
   };
 }
 

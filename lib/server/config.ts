@@ -25,7 +25,16 @@ export type DemoConfig = {
   testUser: string;
   testPassword: string;
   dockerLogsEnabled: boolean;
+  maxUploadBytes: number;
+  maxStoredRuns: number;
+  runRetentionHours: number;
+  evidenceTimeoutSeconds: number;
 };
+
+function positiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 export function getConfig(): DemoConfig {
   const awsEndpointUrl = process.env.AWS_ENDPOINT_URL ?? "http://localhost:4566";
@@ -76,5 +85,9 @@ export function getConfig(): DemoConfig {
     dockerLogsEnabled:
       process.env.FSAMP_DEMO_DOCKER_LOGS === "true" ||
       process.env.FSAMP_DEMO_RUNTIME === "compose",
+    maxUploadBytes: positiveInteger(process.env.FSAMP_DEMO_MAX_UPLOAD_BYTES, 25 * 1024 * 1024),
+    maxStoredRuns: positiveInteger(process.env.FSAMP_DEMO_MAX_STORED_RUNS, 100),
+    runRetentionHours: positiveInteger(process.env.FSAMP_DEMO_RUN_RETENTION_HOURS, 168),
+    evidenceTimeoutSeconds: positiveInteger(process.env.FSAMP_DEMO_EVIDENCE_TIMEOUT_SECONDS, 120),
   };
 }

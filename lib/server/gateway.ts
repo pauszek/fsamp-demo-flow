@@ -13,7 +13,7 @@ function joinGatewayUrl(baseUrl: string, path: string) {
 export async function uploadThroughGateway(run: FlowRun, file: File): Promise<FlowRun> {
   const token = await getAccessToken();
   const config = getConfig();
-  const correlationId = randomUUID().replaceAll("-", "");
+  const correlationId = randomUUID();
   const idempotencyKey = randomUUID();
   const requestId = randomUUID();
 
@@ -37,6 +37,7 @@ export async function uploadThroughGateway(run: FlowRun, file: File): Promise<Fl
       "X-Idempotency-Key": idempotencyKey,
     },
     body,
+    signal: AbortSignal.timeout(20_000),
   });
 
   let uploadResponse: UploadResponse = {};
@@ -44,12 +45,23 @@ export async function uploadThroughGateway(run: FlowRun, file: File): Promise<Fl
   try {
     uploadResponse = JSON.parse(responseText) as UploadResponse;
   } catch {
-    uploadResponse = { raw: responseText };
+    uploadResponse = {};
   }
 
   if (!response.ok) {
-    const details = responseText ? `: ${responseText.slice(0, 500)}` : "";
-    throw new Error(`Gateway upload failed: ${response.status} ${response.statusText}${details}`);
+    throw new Error(`Gateway upload failed with HTTP ${response.status}`);
+  }
+
+  const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (
+    !uploadResponse.fileId ||
+    !uuidV4.test(uploadResponse.fileId) ||
+    !uploadResponse.correlationId ||
+    !uuidV4.test(uploadResponse.correlationId) ||
+    uploadResponse.status !== "UPLOADED" ||
+    !/^[0-9a-f]{64}$/i.test(uploadResponse.checksum ?? "")
+  ) {
+    throw new Error("Gateway returned an invalid upload contract");
   }
 
   return {

@@ -64,10 +64,11 @@ npm install
 npm run dev
 ```
 
-Open:
+The launcher binds the console to loopback and prints a one-time generated
+password. Open the printed URL and use the displayed HTTP Basic credentials:
 
 ```text
-http://localhost:3000
+http://127.0.0.1:3000
 ```
 
 ## Modes
@@ -120,15 +121,33 @@ Each node shows local evidence where available:
 | Gateway | Upload response and correlation ID |
 | Idempotency | DynamoDB query for the generated `X-Idempotency-Key` |
 | S3 SSE-KMS | `HeadObject`, bucket encryption configuration |
-| Gateway Outbox | DynamoDB query for `OUTBOX#FileUpload`, table stream status |
+| Gateway Outbox | Exact DynamoDB query for `OUTBOX#FileUpload#<fileId>`, schema 1.2.0 payload |
 | Publish Bridge | Outbox status, DynamoDB Stream ARN, outbox-publisher Lambda and event-source mapping |
 | SNS/SQS | File-events topic, processing-events topic, subscriptions, queue attributes |
 | DLQ + Logs | Queue redrive policy, DLQ depth, CloudWatch/Logs LocalStack health, log correlation filters |
 | Processor | Processor Lambda mapping and DynamoDB processing metadata |
-| Result Outbox | DynamoDB query for `OUTBOX#FileProcessing` |
+| Result Outbox | Exact DynamoDB query for `OUTBOX#FileProcessing#<fileId>`, `PUBLISHED` schema 1.2.0 result |
 
-The log panel reads CloudWatch Logs in `terraform-local` mode and falls back to
-Docker logs only in `compose` mode. It filters by `fileId`, `correlationId`,
-`requestId`, `idempotencyKey`, object key and event/message IDs.
+The log panel reads bounded CloudWatch pages in `terraform-local` mode and
+Docker logs only in `compose` mode. It returns only lines matching the current
+run identifiers; unfiltered log tails and raw provider errors are never sent to
+the browser.
+
+Captured runs are written atomically with owner-only permissions. By default,
+the console retains at most 100 runs for seven days, accepts files up to 25 MiB,
+and fails any run that cannot collect complete evidence within two minutes.
+These limits can be adjusted with the `FSAMP_DEMO_*` variables in
+`.env.example`.
+
+## Verification
+
+```bash
+npm ci
+npm run check
+npm audit --audit-level=low
+```
+
+CI runs linting, TypeScript checks, unit tests, a production build, and the full
+dependency audit on every pull request.
 
 LocalStack Pro demonstrates the API-level behavior and is the primary repeatable evidence source for the thesis demo. It does not constitute formal FIPS validation or FedRAMP authorization. A short-lived real AWS run can supplement the evidence with CloudTrail, AWS Config, KMS, CloudWatch and managed-service control outputs, but it is not required for the LocalStack parity proof.

@@ -379,12 +379,8 @@ export function FlowConsole() {
   const selectedLogContainer =
     logs?.containers.find((container) => container.name === selectedLogName) ??
     logs?.containers[0];
-  const selectedLogLines = selectedLogContainer
-    ? selectedLogContainer.matchedLines.length
-      ? selectedLogContainer.matchedLines
-      : selectedLogContainer.tail
-    : [];
-  const selectedLogMode = selectedLogContainer?.matchedLines.length ? "matched" : "tail";
+  const selectedLogLines = selectedLogContainer?.matchedLines ?? [];
+  const selectedLogMode = selectedLogContainer?.matchedLines.length ? "matched" : "no matches";
 
   async function startRun(runMode: FlowMode) {
     setBusy(true);
@@ -400,6 +396,7 @@ export function FlowConsole() {
     try {
       const response = await fetch("/api/runs", {
         method: "POST",
+        headers: { "X-FSAMP-Demo-Request": "1" },
         body: form,
       });
       const payload = (await response.json()) as FlowRun;
@@ -751,7 +748,7 @@ export function FlowConsole() {
                   onClick={() => run?.id && loadLogs(run.id).catch(() => undefined)}
                   className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-400"
                 >
-                  tail
+                  refresh logs
                 </button>
               </div>
 
@@ -779,7 +776,7 @@ export function FlowConsole() {
                       <div className="mt-1 text-xs text-zinc-500">
                         {container.matchedLines.length
                           ? `${container.matchedLines.length} matched`
-                          : `${container.tail.length} tail`}
+                          : "0 matched"}
                       </div>
                     </button>
                   )) ?? (
