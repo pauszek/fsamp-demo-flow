@@ -21,7 +21,7 @@ async function loadGetAccessToken() {
   return (await import("@/lib/server/cognito")).getAccessToken;
 }
 
-describe("Cognito gateway token", () => {
+describe("cognito access token", () => {
   beforeEach(() => {
     vi.resetModules();
     send.mockReset();
