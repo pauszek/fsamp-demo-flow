@@ -71,6 +71,51 @@ describe("demo request authorization", () => {
     ).toBeUndefined();
   });
 
+  it("uses the externally visible host after a framework URL rewrite", () => {
+    vi.stubEnv("FSAMP_DEMO_USERNAME", "demo-user");
+    vi.stubEnv("FSAMP_DEMO_PASSWORD", "demo-password");
+
+    expect(
+      authorizeDemoRequest(
+        request("http://localhost/api/runs", {
+          method: "POST",
+          headers: {
+            authorization: authorization(),
+            host: "127.0.0.1:3000",
+            origin: "http://127.0.0.1:3000",
+            "sec-fetch-site": "same-origin",
+            "x-forwarded-host": "localhost",
+            "x-fsamp-demo-request": "1",
+          },
+        }),
+        { mutation: true },
+      ),
+    ).toBeUndefined();
+
+    expect(
+      authorizeDemoRequest(
+        request("http://localhost/api/runs", {
+          method: "POST",
+          headers: {
+            authorization: authorization(),
+            origin: "http://127.0.0.1:3000",
+            "sec-fetch-site": "same-origin",
+            "x-fsamp-demo-request": "1",
+          },
+        }),
+        { mutation: true },
+      ),
+    ).toBeUndefined();
+
+    expect(
+      authorizeDemoRequest(
+        request("http://localhost:3000/api/runs", {
+          headers: { host: "demo.example" },
+        }),
+      )?.status,
+    ).toBe(404);
+  });
+
   it("redacts credentials and infrastructure identifiers", () => {
     const sanitized = sanitizeDiagnostic(
       "Bearer secret.token.value arn:aws:s3:::private 123456789012 password=hunter2",

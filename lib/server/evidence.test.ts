@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialSteps } from "@/lib/flow/steps";
 import type { FlowRun } from "@/lib/flow/types";
-import { validateEvent } from "@/lib/server/evidence";
+import { evaluateProcessorReadEvidence, validateEvent } from "@/lib/server/evidence";
 
+const objectKey = "uploads/sample.txt";
 const run: FlowRun = {
   id: "run_abcdefghijkl",
   mode: "upload",
@@ -13,7 +14,7 @@ const run: FlowRun = {
   input: { filename: "sample.txt", contentType: "text/plain", sizeBytes: 4 },
   fileId: "67aa1d0e-d087-4d2a-b69b-924cc09d83aa",
   correlationId: "55ffaf8c-05c1-4698-9985-e186940bfbc9",
-  objectKey: "uploads/sample.txt",
+  objectKey,
   bucketName: "fsamp-local-files",
   steps: createInitialSteps(),
   errors: [],
@@ -85,5 +86,42 @@ describe("event evidence contract", () => {
         "fsamp-processor",
       ),
     ).toBe(false);
+  });
+});
+
+describe("processor read evidence", () => {
+  const checksum = "a".repeat(64);
+  const baseMetadata = {
+    isEncrypted: true,
+    objectKey: run.objectKey,
+    checksumSHA256: checksum,
+  };
+
+  it("keeps an in-progress record running until the processor writes its hash", () => {
+    expect(
+      evaluateProcessorReadEvidence(
+        { ...baseMetadata, status: "PROCESSING" },
+        objectKey,
+      ),
+    ).toEqual({ status: "running", error: undefined });
+  });
+
+  it("accepts matching terminal evidence and rejects a terminal mismatch", () => {
+    expect(
+      evaluateProcessorReadEvidence(
+        { ...baseMetadata, status: "COMPLETED", fileHash: checksum },
+        objectKey,
+      ),
+    ).toEqual({ status: "success", error: undefined });
+
+    expect(
+      evaluateProcessorReadEvidence(
+        { ...baseMetadata, status: "COMPLETED", fileHash: "b".repeat(64) },
+        objectKey,
+      ),
+    ).toEqual({
+      status: "failed",
+      error: "Processor read evidence does not match the encrypted object checksum",
+    });
   });
 });
