@@ -630,6 +630,33 @@ async function observeDlqAndLogs(run: FlowRun) {
   });
 }
 
+export function evaluateProcessorReadEvidence(
+  metadata: Record<string, unknown>,
+  expectedObjectKey: string,
+): Pick<StepPatch, "status" | "error"> {
+  const metadataStatus = String(metadata.status ?? "");
+  const processingObserved = ["SCANNING", "PROCESSING", "COMPLETED", "FAILED"].includes(
+    metadataStatus,
+  );
+  const terminal = metadataStatus === "COMPLETED" || metadataStatus === "FAILED";
+  const checksum = String(metadata.checksumSHA256 ?? "");
+  const fileHash = String(metadata.fileHash ?? "");
+  const verified =
+    processingObserved &&
+    metadata.isEncrypted === true &&
+    metadata.objectKey === expectedObjectKey &&
+    SHA256.test(fileHash) &&
+    fileHash === checksum;
+
+  return {
+    status: verified ? "success" : terminal ? "failed" : "running",
+    error:
+      terminal && !verified
+        ? "Processor read evidence does not match the encrypted object checksum"
+        : undefined,
+  };
+}
+
 async function observeProcessor(run: FlowRun) {
   if (!run.fileId) {
     for (const step of ["processor-consume", "s3-read", "processor-analysis", "dynamodb-metadata"] as StepId[]) {
@@ -659,12 +686,7 @@ async function observeProcessor(run: FlowRun) {
   const failed = status === "FAILED";
   const checksum = String(metadata.checksumSHA256 ?? "");
   const fileHash = String(metadata.fileHash ?? "");
-  const s3ReadVerified =
-    processingObserved &&
-    metadata.isEncrypted === true &&
-    metadata.objectKey === run.objectKey &&
-    SHA256.test(fileHash) &&
-    fileHash === checksum;
+  const readEvidence = evaluateProcessorReadEvidence(metadata, run.objectKey ?? "");
 
   let processorLambda: Awaited<ReturnType<typeof getLambdaEvidence>> | undefined;
   if (config.runtimeMode === "terraform-local") {
@@ -691,11 +713,7 @@ async function observeProcessor(run: FlowRun) {
     },
   });
   patchStep(run, "s3-read", {
-    status: s3ReadVerified ? "success" : processingObserved ? "failed" : "running",
-    error:
-      processingObserved && !s3ReadVerified
-        ? "Processor read evidence does not match the encrypted object checksum"
-        : undefined,
+    ...readEvidence,
     evidence: {
       objectKey: metadata.objectKey,
       isEncrypted: metadata.isEncrypted,

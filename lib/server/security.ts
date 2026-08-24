@@ -38,6 +38,45 @@ function basicCredentials(request: Request) {
   }
 }
 
+function firstHeaderValue(value: string | null) {
+  return value?.split(",", 1)[0]?.trim();
+}
+
+function externallyVisibleUrl(request: Request) {
+  const internalUrl = new URL(request.url);
+  const forwardedProtocol = firstHeaderValue(request.headers.get("x-forwarded-proto"));
+  const protocol = forwardedProtocol || internalUrl.protocol.slice(0, -1);
+  if (protocol !== "http" && protocol !== "https") return undefined;
+
+  const externalHost =
+    request.headers.get("host")?.trim() ||
+    firstHeaderValue(request.headers.get("x-forwarded-host")) ||
+    internalUrl.host;
+  if (!externalHost) return undefined;
+
+  try {
+    return new URL(`${protocol}://${externalHost}`);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSameOrigin(expected: URL, suppliedValue: string, fetchSite: string | null) {
+  try {
+    const supplied = new URL(suppliedValue);
+    if (supplied.origin === expected.origin) return true;
+
+    return (
+      supplied.protocol === expected.protocol &&
+      LOOPBACK_HOSTS.has(supplied.hostname.toLowerCase()) &&
+      LOOPBACK_HOSTS.has(expected.hostname.toLowerCase()) &&
+      (supplied.port === expected.port || fetchSite === "same-origin")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function response(status: number, message: string, authenticate = false) {
   const headers = new Headers({
     "Cache-Control": "no-store",
@@ -53,7 +92,8 @@ export function authorizeDemoRequest(
   request: Request,
   options: AuthorizationOptions = {},
 ): Response | undefined {
-  const url = new URL(request.url);
+  const url = externallyVisibleUrl(request);
+  if (!url) return response(404, "Not Found");
   if (
     process.env.FSAMP_DEMO_ALLOW_REMOTE !== "true" &&
     !LOOPBACK_HOSTS.has(url.hostname.toLowerCase())
@@ -80,12 +120,12 @@ export function authorizeDemoRequest(
       return response(403, "Missing demo request guard");
     }
 
+    const fetchSite = request.headers.get("sec-fetch-site");
     const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin) {
+    if (origin && !isSameOrigin(url, origin, fetchSite)) {
       return response(403, "Cross-origin request rejected");
     }
 
-    const fetchSite = request.headers.get("sec-fetch-site");
     if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
       return response(403, "Cross-site request rejected");
     }
